@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Job Application Kanban Tracker</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .kanban-col { min-width: 180px; }
+  .card { cursor: grab; user-select: none; }
+  .card:active { cursor: grabbing; }
+  .col-drop { transition: background 0.15s; }
+  .col-drop.drag-over { background: #eff6ff; }
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+<div class="max-w-full px-4 py-6">
+  <h1 class="text-2xl font-bold text-gray-900 mb-1">Job Application Funnel Tracker</h1>
+  <p class="text-sm text-gray-500 mb-4">Track your job search across all stages. SLA warnings: yellow = 7+ days, red = 14+ days.</p>
+
+  <div id="statsBar" class="flex flex-wrap gap-3 mb-4 bg-white rounded-xl shadow p-3"></div>
+
+  <div class="mb-4 bg-white rounded-xl shadow p-4">
+    <h2 class="text-sm font-semibold text-gray-700 mb-3">Add New Application</h2>
+    <div class="flex flex-wrap gap-2 items-end">
+      <div>
+        <label class="block text-xs font-medium text-gray-500 mb-1" for="newCompany">Company</label>
+        <input id="newCompany" type="text" placeholder="Acme Corp" class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-36 focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-500 mb-1" for="newRole">Role</label>
+        <input id="newRole" type="text" placeholder="Software Engineer" class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-44 focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-500 mb-1" for="newDate">Applied Date</label>
+        <input id="newDate" type="date" class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-500 mb-1" for="newNotes">Notes</label>
+        <input id="newNotes" type="text" placeholder="Optional notes" class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-40 focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <button onclick="addCard()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1.5 px-4 rounded-lg transition text-sm">Add</button>
+    </div>
+  </div>
+
+  <div id="kanbanBoard" class="flex gap-3 overflow-x-auto pb-4"></div>
+</div>
+
+<div id="editModal" class="hidden fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+  <div class="bg-white rounded-xl shadow-xl p-6 w-80 max-w-full">
+    <h2 class="text-base font-semibold text-gray-800 mb-4">Edit Application</h2>
+    <input type="hidden" id="editId">
+    <div class="space-y-3">
+      <div>
+        <label class="block text-xs font-medium text-gray-600 mb-1" for="editCompany">Company</label>
+        <input id="editCompany" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-600 mb-1" for="editRole">Role</label>
+        <input id="editRole" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-600 mb-1" for="editNotes">Notes</label>
+        <textarea id="editNotes" rows="2" class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+      </div>
+    </div>
+    <div class="flex gap-2 mt-4">
+      <button onclick="saveEdit()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1.5 rounded-lg transition text-sm">Save</button>
+      <button onclick="closeModal()" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-1.5 rounded-lg transition text-sm">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const COLUMNS = ['Applied','Phone Screen','Interview','Offer','Rejected','Accepted'];
+const COL_COLORS = {
+  'Applied':'bg-blue-50 border-blue-200',
+  'Phone Screen':'bg-yellow-50 border-yellow-200',
+  'Interview':'bg-purple-50 border-purple-200',
+  'Offer':'bg-green-50 border-green-200',
+  'Rejected':'bg-red-50 border-red-200',
+  'Accepted':'bg-emerald-50 border-emerald-200'
+};
+const COL_HEADER = {
+  'Applied':'bg-blue-600','Phone Screen':'bg-yellow-500','Interview':'bg-purple-600',
+  'Offer':'bg-green-600','Rejected':'bg-red-500','Accepted':'bg-emerald-600'
+};
+
+let cards = [];
+let dragCardId = null;
+
+function loadData() {
+  const saved = localStorage.getItem('kanban-jobs');
+  if (saved) { try { cards = JSON.parse(saved); } catch(e) { cards = []; } }
+  // Set default date
+  document.getElementById('newDate').value = new Date().toISOString().split('T')[0];
+}
+
+function saveData() { localStorage.setItem('kanban-jobs', JSON.stringify(cards)); }
+
+function addCard() {
+  const company = document.getElementById('newCompany').value.trim();
+  const role = document.getElementById('newRole').value.trim();
+  const date = document.getElementById('newDate').value;
+  if (!company || !role) { alert('Company and role are required.'); return; }
+  cards.push({ id: Date.now().toString(), company, role, date: date || new Date().toISOString().split('T')[0], notes: document.getElementById('newNotes').value.trim(), status: 'Applied', movedAt: new Date().toISOString() });
+  document.getElementById('newCompany').value = '';
+  document.getElementById('newRole').value = '';
+  document.getElementById('newNotes').value = '';
+  saveData();
+  render();
+}
+
+function daysSince(iso) {
+  return Math.floor((Date.now() - new Date(iso || Date.now()).getTime()) / 86400000);
+}
+
+function moveCard(id, targetStatus) {
+  const card = cards.find(c => c.id === id);
+  if (card) { card.status = targetStatus; card.movedAt = new Date().toISOString(); saveData(); render(); }
+}
+
+function deleteCard(id) {
+  cards = cards.filter(c => c.id !== id);
+  saveData(); render();
+}
+
+function openEdit(id) {
+  const card = cards.find(c => c.id === id);
+  if (!card) return;
+  document.getElementById('editId').value = id;
+  document.getElementById('editCompany').value = card.company;
+  document.getElementById('editRole').value = card.role;
+  document.getElementById('editNotes').value = card.notes || '';
+  document.getElementById('editModal').classList.remove('hidden');
+}
+
+function saveEdit() {
+  const id = document.getElementById('editId').value;
+  const card = cards.find(c => c.id === id);
+  if (card) {
+    card.company = document.getElementById('editCompany').value.trim();
+    card.role = document.getElementById('editRole').value.trim();
+    card.notes = document.getElementById('editNotes').value.trim();
+    saveData(); render();
+  }
+  closeModal();
+}
+
+function closeModal() { document.getElementById('editModal').classList.add('hidden'); }
+
+function render() {
+  const board = document.getElementById('kanbanBoard');
+  board.innerHTML = '';
+
+  COLUMNS.forEach(col => {
+    const colEl = document.createElement('div');
+    colEl.className = `kanban-col col-drop flex-shrink-0 w-48 sm:w-52 bg-white rounded-xl shadow border ${COL_COLORS[col]}`;
+    colEl.dataset.col = col;
+
+    colEl.addEventListener('dragover', e => { e.preventDefault(); colEl.classList.add('drag-over'); });
+    colEl.addEventListener('dragleave', () => colEl.classList.remove('drag-over'));
+    colEl.addEventListener('drop', e => {
+      e.preventDefault(); colEl.classList.remove('drag-over');
+      if (dragCardId) moveCard(dragCardId, col);
+    });
+
+    const header = document.createElement('div');
+    header.className = `${COL_HEADER[col]} text-white rounded-t-xl px-3 py-2 flex justify-between items-center`;
+    const title = document.createElement('span');
+    title.className = 'text-xs font-semibold uppercase tracking-wide';
+    title.textContent = col;
+    const count = document.createElement('span');
+    count.className = 'text-xs bg-white bg-opacity-30 px-1.5 py-0.5 rounded-full font-bold';
+    count.textContent = cards.filter(c => c.status === col).length;
+    header.appendChild(title); header.appendChild(count);
+    colEl.appendChild(header);
+
+    const body = document.createElement('div');
+    body.className = 'p-2 space-y-2 min-h-16';
+    cards.filter(c => c.status === col).forEach(card => {
+      const days = daysSince(card.movedAt);
+      const sla = days >= 14 ? 'border-red-400 bg-red-50' : days >= 7 ? 'border-yellow-400 bg-yellow-50' : 'border-gray-200 bg-white';
+      const cardEl = document.createElement('div');
+      cardEl.className = `card border rounded-lg p-2 shadow-sm ${sla}`;
+      cardEl.draggable = true;
+      cardEl.dataset.id = card.id;
+      cardEl.addEventListener('dragstart', () => { dragCardId = card.id; });
+      cardEl.addEventListener('dragend', () => { dragCardId = null; });
+
+      const company = document.createElement('div');
+      company.className = 'text-xs font-bold text-gray-800 truncate';
+      company.textContent = card.company;
+      const role = document.createElement('div');
+      role.className = 'text-xs text-gray-500 truncate';
+      role.textContent = card.role;
+      const meta = document.createElement('div');
+      meta.className = 'text-xs text-gray-400 mt-1';
+      meta.textContent = card.date + ' · ' + days + 'd';
+      if (days >= 7) {
+        const warn = document.createElement('span');
+        warn.className = `ml-1 text-xs font-bold ${days >= 14 ? 'text-red-600' : 'text-yellow-600'}`;
+        warn.textContent = days >= 14 ? '⚠ Stale' : '~ Check';
+        meta.appendChild(warn);
+      }
+      if (card.notes) {
+        const notes = document.createElement('div');
+        notes.className = 'text-xs text-gray-400 mt-1 truncate';
+        notes.textContent = card.notes;
+        cardEl.appendChild(notes);
+      }
+
+      // Move buttons
+      const actions = document.createElement('div');
+      actions.className = 'flex gap-1 mt-2 flex-wrap';
+      const colIdx = COLUMNS.indexOf(col);
+      if (colIdx > 0) {
+        const prev = document.createElement('button');
+        prev.className = 'text-xs bg-gray-100 hover:bg-gray-200 px-1.5 py-0.5 rounded transition';
+        prev.textContent = '← Back';
+        prev.onclick = (e) => { e.stopPropagation(); moveCard(card.id, COLUMNS[colIdx-1]); };
+        actions.appendChild(prev);
+      }
+      if (colIdx < COLUMNS.length - 1) {
+        const next = document.createElement('button');
+        next.className = 'text-xs bg-blue-100 hover:bg-blue-200 text-blue-700 px-1.5 py-0.5 rounded transition';
+        next.textContent = 'Next →';
+        next.onclick = (e) => { e.stopPropagation(); moveCard(card.id, COLUMNS[colIdx+1]); };
+        actions.appendChild(next);
+      }
+      const editBtn = document.createElement('button');
+      editBtn.className = 'text-xs bg-gray-100 hover:bg-gray-200 px-1.5 py-0.5 rounded transition';
+      editBtn.textContent = 'Edit';
+      editBtn.onclick = (e) => { e.stopPropagation(); openEdit(card.id); };
+      const delBtn = document.createElement('button');
+      delBtn.className = 'text-xs bg-red-100 hover:bg-red-200 text-red-600 px-1.5 py-0.5 rounded transition';
+      delBtn.textContent = 'Del';
+      delBtn.onclick = (e) => { e.stopPropagation(); if(confirm('Delete this application?')) deleteCard(card.id); };
+      actions.appendChild(editBtn);
+      actions.appendChild(delBtn);
+
+      cardEl.appendChild(company);
+      cardEl.appendChild(role);
+      cardEl.appendChild(meta);
+      cardEl.appendChild(actions);
+      body.appendChild(cardEl);
+    });
+    colEl.appendChild(body);
+    board.appendChild(colEl);
+  });
+
+  renderStats();
+}
+
+function renderStats() {
+  const el = document.getElementById('statsBar');
+  el.innerHTML = '';
+  const total = cards.length;
+  const inProgress = cards.filter(c => ['Phone Screen','Interview'].includes(c.status)).length;
+  const offers = cards.filter(c => c.status === 'Offer' || c.status === 'Accepted').length;
+  const rejected = cards.filter(c => c.status === 'Rejected').length;
+  const offerRate = total > 0 ? (offers/total*100).toFixed(1) : '0.0';
+  const rejRate = total > 0 ? (rejected/total*100).toFixed(1) : '0.0';
+  const stats = [
+    {label:'Total Applied', value:total, color:'text-blue-700'},
+    {label:'In Progress', value:inProgress, color:'text-purple-700'},
+    {label:'Offer Rate', value:offerRate+'%', color:'text-green-700'},
+    {label:'Rejection Rate', value:rejRate+'%', color:'text-red-700'},
+  ];
+  stats.forEach(s => {
+    const div = document.createElement('div');
+    div.className = 'flex items-center gap-2';
+    const lbl = document.createElement('span');
+    lbl.className = 'text-xs text-gray-500';
+    lbl.textContent = s.label + ':';
+    const val = document.createElement('span');
+    val.className = `text-sm font-bold ${s.color}`;
+    val.textContent = s.value;
+    div.appendChild(lbl); div.appendChild(val);
+    el.appendChild(div);
+    if (stats.indexOf(s) < stats.length - 1) {
+      const sep = document.createElement('span');
+      sep.className = 'text-gray-300';
+      sep.textContent = '|';
+      el.appendChild(sep);
+    }
+  });
+}
+
+loadData();
+render();
+</script>
+</body>
+</html>
